@@ -11,15 +11,39 @@ async function registrarGarita(req, res) {
         });
     }
 
+    const userLimpio = String(username).trim().toUpperCase();
+    const nombreLimpio = String(nombreCompleto).trim();
+
+    if (!/^[A-Z0-9_-]{4,25}$/.test(userLimpio)) {
+        return res.status(400).json({
+            error: 'El usuario debe tener entre 4 y 25 caracteres (letras, números, guion o guion bajo).'
+        });
+    }
+
+    const regexSegura = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+    if (!regexSegura.test(password)) {
+        return res.status(400).json({
+            error: 'La contraseña debe tener mínimo 8 caracteres, mayúscula, minúscula, número y un símbolo especial.'
+        });
+    }
+
+    const passLower = password.toLowerCase();
+    const palabrasNombre = nombreLimpio.toLowerCase().split(/\s+/).filter(p => p.length >= 3);
+    if (passLower.includes(userLimpio.toLowerCase()) || palabrasNombre.some(p => passLower.includes(p))) {
+        return res.status(400).json({
+            error: 'Por seguridad, la contraseña no puede contener el usuario ni el nombre del operador.'
+        });
+    }
+
     try {
         const nuevoOperador = await garitaService.crearOperadorGarita({
-            username,
+            username: userLimpio,
             password,
-            nombreCompleto
+            nombreCompleto: nombreLimpio
         });
 
         return res.status(201).json({
-            mensaje: 'Operador de Garita creado exitosamente.',
+            mensaje: `Operador ${userLimpio} creado con contraseña segura.`,
             operador: nuevoOperador
         });
     } catch (error) {
