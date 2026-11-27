@@ -1,11 +1,5 @@
-// src/modules/reservas/reservas.controller.js
-const pool = require('../../config/database');
 const reservasService = require('./reservas.service');
 
-/**
- * Validar Ingreso en Garita controlando los 20 minutos de tolerancia estricta (por código/QR)
- * URL: POST /api/garita/registrar-ingreso
- */
 async function registrarIngresoVehiculo(req, res) {
     const codigoAlumnoLimpio = req.body.codigo_alumno || req.body.codigoAlumno;
 
@@ -13,75 +7,19 @@ async function registrarIngresoVehiculo(req, res) {
         return res.status(400).json({ error: 'Debe ingresar el código de alumno o escanear el QR.' });
     }
 
-    const parametroAlumno = String(codigoAlumnoLimpio).trim().toUpperCase();
-    const parametroFecha = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
-
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-
-        const { rows } = await client.query(
-            `SELECT id_reserva,
-                    hora_llegada_programada::text AS hora_text,
-                    ((now() AT TIME ZONE 'America/Lima')::time
-                        > hora_llegada_programada + interval '20 minutes') AS vencida
-             FROM reservas
-             WHERE codigo_alumno = $1
-               AND fecha_reserva = $2::date
-               AND estado_reserva = 'PENDIENTE'
-             FOR UPDATE`,
-            [parametroAlumno, parametroFecha]
-        );
-
-        if (rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-                error: `No se localizó una reserva PENDIENTE para el alumno ${parametroAlumno} hoy (${parametroFecha}).`
-            });
-        }
-
-        const { id_reserva: idReserva, hora_text: horaProgramada, vencida } = rows[0];
-
-        if (vencida) {
-            await client.query(
-                `UPDATE reservas SET estado_reserva = 'EXPIRADA' WHERE id_reserva = $1`,
-                [idReserva]
-            );
-            await client.query(
-                `INSERT INTO historial_penalizaciones (codigo_alumno, motivo, fecha_fin)
-                 VALUES ($1, $2, now() + interval '3 days')`,
-                [parametroAlumno, 'Excedió los 20 minutos de tolerancia en garita.']
-            );
-            await client.query('COMMIT');
-
-            return res.status(403).json({
-                error: `Acceso denegado: excediste los 20 minutos de tolerancia (hora programada: ${horaProgramada}). Cupo liberado al aforo.`
-            });
-        }
-
-        await client.query(
-            `UPDATE reservas SET estado_reserva = 'EN_CURSO' WHERE id_reserva = $1`,
-            [idReserva]
-        );
-
-        await client.query('COMMIT');
-
-        return res.status(200).json({
-            mensaje: `Ingreso validado para ${parametroAlumno}. (+1 vehículo en planta)`
-        });
+        const parametroAlumno = String(codigoAlumnoLimpio).trim().toUpperCase();
+        const resultado = await reservasService.procesarIngresoEnGarita(parametroAlumno);
+        return res.status(200).json(resultado);
     } catch (error) {
-        await client.query('ROLLBACK').catch(() => {});
+        if (error.status) {
+            return res.status(error.status).json({ error: error.message });
+        }
         console.error('[Garita] ERROR:', error.message);
         return res.status(500).json({ error: 'Fallo interno al procesar el ingreso vehicular en garita.' });
-    } finally {
-        client.release();
     }
 }
 
-/**
- * Registra la salida del vehículo liberando un cupo en el aforo del día.
- * URL: POST /api/garita/registrar-salida
- */
 async function registrarSalidaVehiculo(req, res) {
     const codigoAlumno = req.body.codigo_alumno || req.body.codigoAlumno;
 
@@ -102,10 +40,6 @@ async function registrarSalidaVehiculo(req, res) {
     }
 }
 
-/**
- * Obtiene el movimiento operativo diario (reservas pendientes y vehículos en planta).
- * URL: GET /api/garita/espacios
- */
 async function obtenerEspaciosGarita(req, res) {
     try {
         const movimientos = await reservasService.obtenerMonitorDiarioGarita();
@@ -116,10 +50,6 @@ async function obtenerEspaciosGarita(req, res) {
     }
 }
 
-/**
- * Procesa la solicitud del alumno para reservar cupo por aforo (sin slot físico).
- * URL: POST /api/reservas/crear
- */
 async function crearReservaAlumno(req, res) {
     const { codigo_alumno, otp_verificado, fecha_reserva, hora_llegada } = req.body;
 
@@ -152,10 +82,6 @@ async function crearReservaAlumno(req, res) {
     }
 }
 
-/**
- * Permite al alumno cancelar de forma voluntaria su reserva pactada.
- * URL: POST /api/reservas/cancelar
- */
 async function cancelarReservaAlumno(req, res) {
     const { codigo_alumno, fecha_reserva } = req.body;
 
@@ -178,10 +104,6 @@ async function cancelarReservaAlumno(req, res) {
     }
 }
 
-/**
- * Devuelve todas las reservas de un estudiante para la pantalla Mis Reservas.
- * URL: GET /api/reservas/mis-reservas
- */
 async function listarMisReservas(req, res) {
     try {
         const codigoAlumno = req.query.codigoAlumno || req.usuario?.codigoAlumno || req.body?.codigo_alumno;
