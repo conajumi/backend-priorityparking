@@ -248,6 +248,75 @@ async function obtenerReservasPorAlumno(codigoAlumno) {
     return reservas.map(formatearReserva);
 }
 
+async function procesarIngresoEnGarita(codigoAlumno) {
+    const ahora = new Date();
+    const limaStr = ahora.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    const fechaHoyUTC = new Date(`${limaStr}T00:00:00.000Z`);
+
+    const limaHoraActual = ahora.toLocaleTimeString('en-GB', {
+        timeZone: 'America/Lima',
+        hour12: false
+    });
+    const horaActualDate = new Date(`1970-01-01T${limaHoraActual}.000Z`);
+
+    return await prisma.$transaction(async (tx) => {
+        const reserva = await tx.reserva.findFirst({
+            where: {
+                codigoAlumno,
+                fechaReserva: fechaHoyUTC,
+                estadoReserva: 'PENDIENTE'
+            }
+        });
+
+        if (!reserva) {
+            throw {
+                status: 400,
+                message: `No se localizó una reserva PENDIENTE para el alumno ${codigoAlumno} hoy (${limaStr}).`
+            };
+        }
+
+        const horaProgDate = reserva.horaLlegadaProgramada instanceof Date
+            ? reserva.horaLlegadaProgramada
+            : new Date(`1970-01-01T${String(reserva.horaLlegadaProgramada)}.000Z`);
+
+        const horaProgramadaStr = horaProgDate.toISOString().slice(11, 19);
+        const limiteToleranciaMs = horaProgDate.getTime() + 20 * 60 * 1000;
+
+        if (horaActualDate.getTime() > limiteToleranciaMs) {
+            const fechaFinPenalizacion = new Date();
+            fechaFinPenalizacion.setDate(fechaFinPenalizacion.getDate() + 3);
+
+            await tx.reserva.update({
+                where: { idReserva: reserva.idReserva },
+                data: { estadoReserva: 'EXPIRADA' }
+            });
+
+            await tx.historialPenalizacion.create({
+                data: {
+                    codigoAlumno,
+                    motivo: 'Excedió los 20 minutos de tolerancia en garita.',
+                    fechaFin: fechaFinPenalizacion,
+                    activa: true
+                }
+            });
+
+            throw {
+                status: 403,
+                message: `Acceso denegado: excediste los 20 minutos de tolerancia (hora programada: ${horaProgramadaStr}). Cupo liberado al aforo.`
+            };
+        }
+
+        await tx.reserva.update({
+            where: { idReserva: reserva.idReserva },
+            data: { estadoReserva: 'EN_CURSO' }
+        });
+
+        return {
+            mensaje: `Ingreso validado para ${codigoAlumno}. (+1 vehículo en planta)`
+        };
+    });
+}
+
 module.exports = {
     buscarReservaActiva,
     ejecutarIngresoTransaccional,
@@ -255,5 +324,6 @@ module.exports = {
     obtenerMonitorDiarioGarita,
     ejecutarReservaTransaccional,
     ejecutarCancelacionTransaccional,
-    obtenerReservasPorAlumno
+    obtenerReservasPorAlumno,
+    procesarIngresoEnGarita
 };
