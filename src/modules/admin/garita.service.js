@@ -1,7 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../../config/prisma');
 const bcrypt = require('bcrypt');
-
-const prisma = new PrismaClient();
 
 async function crearOperadorGarita({ username, password, nombreCompleto }) {
     const usernameNormalizado = username.trim().toUpperCase();

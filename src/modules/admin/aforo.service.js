@@ -1,9 +1,8 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../../config/prisma');
 
 function obtenerFechaHoyLima() {
     const ahora = new Date();
-    const limaStr = ahora.toLocaleDateString('en-CA', { timeZone: 'America/Lima' }); // YYYY-MM-DD
+    const limaStr = ahora.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
     return {
         fechaISO: limaStr,
         mesAnio: limaStr.slice(0, 7),
@@ -14,18 +13,15 @@ function obtenerFechaHoyLima() {
 async function obtenerEstadoAforoHoy() {
     const { fechaISO, mesAnio, fechaDate } = obtenerFechaHoyLima();
 
-    // 1. Capacidad mensual definida por el Admin (si no existe para este mes, toma la última o 70 por defecto)
     let config = await prisma.configuracionAforo.findUnique({ where: { mesAnio } });
     if (!config) {
         config = await prisma.configuracionAforo.findFirst({ orderBy: { idConfiguracion: 'desc' } });
     }
     const capacidadMensual = config ? config.capacidadMensual : 70;
 
-    // 2. Bloqueos operativos registrados por Garita para hoy
     const bloqueo = await prisma.bloqueoDiario.findUnique({ where: { fecha: fechaDate } });
     const bloqueadosHoy = bloqueo ? bloqueo.cuposBloqueados : 0;
 
-    // 3. Reservas esperadas (PENDIENTE) y vehículos ya ingresados (EN_CURSO / OCUPADO) hoy
     const [reservasEsperadasHoy, ocupadosActuales, totalEstudiantesAptos] = await Promise.all([
         prisma.reserva.count({
             where: { fechaReserva: fechaDate, estadoReserva: 'PENDIENTE' }

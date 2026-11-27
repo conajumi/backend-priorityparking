@@ -1,220 +1,251 @@
-const pool = require('../../config/database');
+const prisma = require('../../config/prisma');
 const QRCode = require('qrcode');
 
+function obtenerFechaHoyLimaDate() {
+    const limaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+    return new Date(`${limaStr}T00:00:00.000Z`);
+}
+
+function formatearReserva(r) {
+    const horaStr = r.horaLlegadaProgramada instanceof Date
+        ? r.horaLlegadaProgramada.toISOString().slice(11, 19)
+        : String(r.horaLlegadaProgramada);
+    const fechaStr = r.fechaReserva instanceof Date
+        ? r.fechaReserva.toISOString().slice(0, 10)
+        : String(r.fechaReserva);
+
+    return {
+        id_reserva: r.idReserva,
+        codigo_alumno: r.codigoAlumno,
+        id_espacio: r.idEspacio,
+        codigo_otp_usado: r.codigoOtpUsado,
+        fecha_reserva: fechaStr,
+        hora_llegada_programada: horaStr,
+        estado_reserva: r.estadoReserva
+    };
+}
+
 async function buscarReservaActiva(codigoAlumno, fechaReserva) {
-    const query = `
-        SELECT id_reserva, hora_llegada_programada, estado_reserva
-        FROM reservas 
-        WHERE codigo_alumno = $1 
-          AND fecha_reserva = $2 
-          AND estado_reserva = 'PENDIENTE'
-        LIMIT 1
-    `;
-    const { rows } = await pool.query(query, [codigoAlumno, fechaReserva]);
-    return rows[0];
+    const fechaDate = new Date(`${fechaReserva}T00:00:00.000Z`);
+    const reserva = await prisma.reserva.findFirst({
+        where: {
+            codigoAlumno,
+            fechaReserva: fechaDate,
+            estadoReserva: 'PENDIENTE'
+        },
+        select: {
+            idReserva: true,
+            horaLlegadaProgramada: true,
+            estadoReserva: true
+        }
+    });
+
+    if (!reserva) return null;
+    return {
+        id_reserva: reserva.idReserva,
+        hora_llegada_programada: reserva.horaLlegadaProgramada instanceof Date
+            ? reserva.horaLlegadaProgramada.toISOString().slice(11, 19)
+            : String(reserva.horaLlegadaProgramada),
+        estado_reserva: reserva.estadoReserva
+    };
 }
 
 async function ejecutarIngresoTransaccional(idReserva) {
-    const queryReserva = `
-        UPDATE reservas 
-        SET estado_reserva = 'EN_CURSO' 
-        WHERE id_reserva = $1::integer AND estado_reserva = 'PENDIENTE'
-        RETURNING *
-    `;
-    const { rows } = await pool.query(queryReserva, [idReserva]);
-    if (!rows.length) {
+    const id = parseInt(idReserva, 10);
+    const actualizadas = await prisma.reserva.updateMany({
+        where: {
+            idReserva: id,
+            estadoReserva: 'PENDIENTE'
+        },
+        data: {
+            estadoReserva: 'EN_CURSO'
+        }
+    });
+
+    if (!actualizadas.count) {
         throw new Error('La reserva ya fue utilizada o no está pendiente.');
     }
-    return rows[0];
+
+    const reserva = await prisma.reserva.findUnique({ where: { idReserva: id } });
+    return formatearReserva(reserva);
 }
 
 async function ejecutarSalidaPorAlumno(codigoAlumno) {
-    const query = `
-        UPDATE reservas 
-        SET estado_reserva = 'FINALIZADA' 
-        WHERE codigo_alumno = $1 
-          AND fecha_reserva = CURRENT_DATE 
-          AND estado_reserva IN ('EN_CURSO', 'COMPLETADA')
-        RETURNING *
-    `;
-    const { rows } = await pool.query(query, [codigoAlumno]);
-    if (!rows.length) {
+    const hoyDate = obtenerFechaHoyLimaDate();
+    const activa = await prisma.reserva.findFirst({
+        where: {
+            codigoAlumno,
+            fechaReserva: hoyDate,
+            estadoReserva: { in: ['EN_CURSO', 'COMPLETADA'] }
+        }
+    });
+
+    if (!activa) {
         throw new Error(`No se encontró un vehículo dentro del campus para el alumno ${codigoAlumno}.`);
     }
-    return rows[0];
+
+    const actualizada = await prisma.reserva.update({
+        where: { idReserva: activa.idReserva },
+        data: { estadoReserva: 'FINALIZADA' }
+    });
+
+    return formatearReserva(actualizada);
 }
 
 async function obtenerMonitorDiarioGarita() {
-    const query = `
-        SELECT 
-            r.id_reserva,
-            r.codigo_alumno,
-            e.nombre_completo,
-            r.fecha_reserva,
-            r.hora_llegada_programada,
-            r.estado_reserva
-        FROM reservas r
-        LEFT JOIN estudiantes_habilitados e ON r.codigo_alumno = e.codigo_alumno
-        WHERE r.fecha_reserva = CURRENT_DATE
-          AND r.estado_reserva IN ('PENDIENTE', 'EN_CURSO', 'COMPLETADA')
-        ORDER BY 
-            CASE WHEN r.estado_reserva IN ('EN_CURSO', 'COMPLETADA') THEN 1 ELSE 2 END,
-            r.hora_llegada_programada ASC
-    `;
-    const { rows } = await pool.query(query);
-    return rows;
+    const hoyDate = obtenerFechaHoyLimaDate();
+    const reservas = await prisma.reserva.findMany({
+        where: {
+            fechaReserva: hoyDate,
+            estadoReserva: { in: ['PENDIENTE', 'EN_CURSO', 'COMPLETADA'] }
+        },
+        include: {
+            estudiante: {
+                select: { nombreCompleto: true }
+            }
+        },
+        orderBy: { horaLlegadaProgramada: 'asc' }
+    });
+
+    const ordenadas = reservas.sort((a, b) => {
+        const pesoA = ['EN_CURSO', 'COMPLETADA'].includes(a.estadoReserva) ? 1 : 2;
+        const pesoB = ['EN_CURSO', 'COMPLETADA'].includes(b.estadoReserva) ? 1 : 2;
+        return pesoA - pesoB;
+    });
+
+    return ordenadas.map(r => ({
+        ...formatearReserva(r),
+        nombre_completo: r.estudiante?.nombreCompleto || null
+    }));
 }
 
 async function ejecutarReservaTransaccional(codigoAlumno, codigoOtpUsado, fechaReserva, horaLlegadaProgramada) {
-    const clienteBD = await pool.connect();
-    try {
-        await clienteBD.query('BEGIN');
+    const fechaDate = new Date(`${fechaReserva}T00:00:00.000Z`);
+    const horaNormalizada = horaLlegadaProgramada.length === 5 ? `${horaLlegadaProgramada}:00` : horaLlegadaProgramada;
+    const horaDate = new Date(`1970-01-01T${horaNormalizada}.000Z`);
 
-        const penRes = await clienteBD.query(
-            `SELECT motivo FROM historial_penalizaciones
-             WHERE codigo_alumno = $1 AND activa = true AND fecha_fin >= now()
-             LIMIT 1`,
-            [codigoAlumno]
-        );
-        if (penRes.rows.length > 0) {
-            throw new Error(`No puedes reservar: tienes una suspensión activa por "${penRes.rows[0].motivo}".`);
+    const resultado = await prisma.$transaction(async (tx) => {
+        const penalizacion = await tx.historialPenalizacion.findFirst({
+            where: {
+                codigoAlumno,
+                activa: true,
+                fechaFin: { gte: new Date() }
+            }
+        });
+        if (penalizacion) {
+            throw new Error(`No puedes reservar: tienes una suspensión activa por "${penalizacion.motivo}".`);
         }
 
-        const existenteRes = await clienteBD.query(
-            `SELECT id_reserva, estado_reserva FROM reservas 
-             WHERE codigo_alumno = $1 AND fecha_reserva = $2::date
-             FOR UPDATE`,
-            [codigoAlumno, fechaReserva]
-        );
-        const reservaPrevia = existenteRes.rows[0];
+        const reservaPrevia = await tx.reserva.findFirst({
+            where: {
+                codigoAlumno,
+                fechaReserva: fechaDate
+            }
+        });
 
         if (reservaPrevia) {
-            if (['PENDIENTE', 'EN_CURSO', 'COMPLETADA'].includes(reservaPrevia.estado_reserva)) {
+            if (['PENDIENTE', 'EN_CURSO', 'COMPLETADA'].includes(reservaPrevia.estadoReserva)) {
                 throw new Error(`Ya cuentas con una reserva activa para el día ${fechaReserva}.`);
             }
-            if (reservaPrevia.estado_reserva === 'EXPIRADA') {
+            if (reservaPrevia.estadoReserva === 'EXPIRADA') {
                 throw new Error(`Tu reserva del ${fechaReserva} expiró por inasistencia en garita; no puedes volver a reservar hoy.`);
             }
         }
 
         const mesAnio = String(fechaReserva).slice(0, 7);
-        const capRes = await clienteBD.query(
-            `SELECT capacidad_mensual FROM configuracion_aforo 
-             WHERE mes_anio = $1 
-             UNION ALL
-             SELECT capacidad_mensual FROM configuracion_aforo ORDER BY 1 DESC LIMIT 1`,
-            [mesAnio]
-        );
-        const capacidadMensual = capRes.rows[0]?.capacidad_mensual ?? 70;
+        let config = await tx.configuracionAforo.findUnique({ where: { mesAnio } });
+        if (!config) {
+            config = await tx.configuracionAforo.findFirst({ orderBy: { idConfiguracion: 'desc' } });
+        }
+        const capacidadMensual = config?.capacidadMensual ?? 70;
 
-        const bloqRes = await clienteBD.query(
-            `SELECT cupos_bloqueados FROM bloqueos_diarios WHERE fecha = $1::date`,
-            [fechaReserva]
-        );
-        const bloqueadosDia = bloqRes.rows[0]?.cupos_bloqueados ?? 0;
+        const bloqueo = await tx.bloqueoDiario.findUnique({ where: { fecha: fechaDate } });
+        const bloqueadosDia = bloqueo?.cuposBloqueados ?? 0;
 
-        const ocupadasRes = await clienteBD.query(
-            `SELECT id_reserva FROM reservas 
-             WHERE fecha_reserva = $1::date 
-               AND estado_reserva IN ('PENDIENTE', 'EN_CURSO', 'COMPLETADA')
-             FOR UPDATE`,
-            [fechaReserva]
-        );
-        const disponibles = capacidadMensual - bloqueadosDia - ocupadasRes.rows.length;
+        const ocupadas = await tx.reserva.count({
+            where: {
+                fechaReserva: fechaDate,
+                estadoReserva: { in: ['PENDIENTE', 'EN_CURSO', 'COMPLETADA'] }
+            }
+        });
 
-        if (disponibles <= 0) {
+        if (capacidadMensual - bloqueadosDia - ocupadas <= 0) {
             throw new Error('Aforo completo para la fecha seleccionada. No quedan cupos disponibles.');
         }
 
-        let resultadoReserva;
-        if (reservaPrevia && reservaPrevia.estado_reserva === 'CANCELADA') {
-            resultadoReserva = await clienteBD.query(
-                `UPDATE reservas 
-                 SET codigo_otp_usado = $1,
-                     hora_llegada_programada = $2,
-                     estado_reserva = 'PENDIENTE',
-                     id_espacio = NULL
-                 WHERE id_reserva = $3
-                 RETURNING *;`,
-                [codigoOtpUsado, horaLlegadaProgramada, reservaPrevia.id_reserva]
-            );
-        } else {
-            resultadoReserva = await clienteBD.query(
-                `INSERT INTO reservas (codigo_alumno, id_espacio, codigo_otp_usado, fecha_reserva, hora_llegada_programada, estado_reserva)
-                 VALUES ($1, NULL, $2, $3, $4, 'PENDIENTE')
-                 RETURNING *;`,
-                [codigoAlumno, codigoOtpUsado, fechaReserva, horaLlegadaProgramada]
-            );
+        if (reservaPrevia && reservaPrevia.estadoReserva === 'CANCELADA') {
+            return await tx.reserva.update({
+                where: { idReserva: reservaPrevia.idReserva },
+                data: {
+                    codigoOtpUsado,
+                    horaLlegadaProgramada: horaDate,
+                    estadoReserva: 'PENDIENTE',
+                    idEspacio: null
+                }
+            });
         }
 
-        await clienteBD.query('COMMIT');
-
-        const payloadQR = JSON.stringify({
-            idReserva: resultadoReserva.rows[0].id_reserva,
-            codigoAlumno,
-            fechaReserva,
-            horaLlegadaProgramada
+        return await tx.reserva.create({
+            data: {
+                codigoAlumno,
+                idEspacio: null,
+                codigoOtpUsado,
+                fechaReserva: fechaDate,
+                horaLlegadaProgramada: horaDate,
+                estadoReserva: 'PENDIENTE'
+            }
         });
-        const qrCodeBase64 = await QRCode.toDataURL(payloadQR, { margin: 2, width: 250 });
+    });
 
-        return {
-            reserva: resultadoReserva.rows[0],
-            qrCode: qrCodeBase64
-        };
-    } catch (error) {
-        await clienteBD.query('ROLLBACK');
-        throw error;
-    } finally {
-        clienteBD.release();
-    }
+    const payloadQR = JSON.stringify({
+        idReserva: resultado.idReserva,
+        codigoAlumno,
+        fechaReserva,
+        horaLlegadaProgramada
+    });
+    const qrCodeBase64 = await QRCode.toDataURL(payloadQR, { margin: 2, width: 250 });
+
+    return {
+        reserva: formatearReserva(resultado),
+        qrCode: qrCodeBase64
+    };
 }
 
 async function ejecutarCancelacionTransaccional(codigoAlumno, fechaReserva) {
-    const clienteBD = await pool.connect();
-    try {
-        await clienteBD.query('BEGIN');
+    const fechaDate = new Date(`${fechaReserva}T00:00:00.000Z`);
 
-        const buscarQuery = `
-            SELECT id_reserva FROM reservas 
-            WHERE codigo_alumno = $1 AND fecha_reserva = $2 AND estado_reserva = 'PENDIENTE'
-            FOR UPDATE
-        `;
-        const { rows } = await clienteBD.query(buscarQuery, [codigoAlumno, fechaReserva]);
+    await prisma.$transaction(async (tx) => {
+        const pendiente = await tx.reserva.findFirst({
+            where: {
+                codigoAlumno,
+                fechaReserva: fechaDate,
+                estadoReserva: 'PENDIENTE'
+            }
+        });
 
-        if (rows.length === 0) {
+        if (!pendiente) {
             throw new Error('No se encontró ninguna reserva pendiente para cancelar en la fecha seleccionada.');
         }
 
-        await clienteBD.query(
-            "UPDATE reservas SET estado_reserva = 'CANCELADA' WHERE id_reserva = $1",
-            [rows[0].id_reserva]
-        );
+        await tx.reserva.update({
+            where: { idReserva: pendiente.idReserva },
+            data: { estadoReserva: 'CANCELADA' }
+        });
+    });
 
-        await clienteBD.query('COMMIT');
-        return true;
-    } catch (error) {
-        await clienteBD.query('ROLLBACK');
-        throw error;
-    } finally {
-        clienteBD.release();
-    }
+    return true;
 }
 
 async function obtenerReservasPorAlumno(codigoAlumno) {
-    const query = `
-        SELECT 
-            id_reserva,
-            codigo_alumno,
-            codigo_otp_usado,
-            fecha_reserva,
-            hora_llegada_programada,
-            estado_reserva
-        FROM reservas
-        WHERE codigo_alumno = $1
-        ORDER BY fecha_reserva DESC, hora_llegada_programada DESC
-    `;
-    const { rows } = await pool.query(query, [codigoAlumno]);
-    return rows;
+    const reservas = await prisma.reserva.findMany({
+        where: { codigoAlumno },
+        orderBy: [
+            { fechaReserva: 'desc' },
+            { horaLlegadaProgramada: 'desc' }
+        ]
+    });
+
+    return reservas.map(formatearReserva);
 }
 
 module.exports = {
