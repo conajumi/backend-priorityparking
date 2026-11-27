@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../../config/prisma');
 
 function evaluarElegibilidadYPrioridad(pensionesTexto, estadoTexto, meritoTexto, promedio, asistencia) {
     const estaAlDiaPagos = ['true', '1', 'si', 'sí'].includes(pensionesTexto.toLowerCase());

@@ -1,26 +1,20 @@
-// src/jobs/tolerance.job.js
 const cron = require('node-cron');
-const { PrismaClient } = require('@prisma/client');
-
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma');
 
 function iniciarVerificadorTolerancia() {
-    // Se ejecuta cada minuto para validar vencimiento de tolerancia
     cron.schedule('* * * * *', async () => {
         try {
             const ahora = new Date();
             const limaFechaStr = ahora.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
             const fechaHoyUTC = new Date(`${limaFechaStr}T00:00:00.000Z`);
 
-            // Hora actual en Lima hace 20 minutos representada en base 1970-01-01 para @db.Time
             const limaHoraActual = ahora.toLocaleTimeString('en-GB', {
                 timeZone: 'America/Lima',
                 hour12: false
-            }); // HH:mm:ss
+            });
             const limiteTolerancia = new Date(`1970-01-01T${limaHoraActual}.000Z`);
             limiteTolerancia.setMinutes(limiteTolerancia.getMinutes() - 20);
 
-            // Buscar reservas PENDIENTES de hoy cuya hora programada superó los 20 min
             const reservasVencidas = await prisma.reserva.findMany({
                 where: {
                     fechaReserva: fechaHoyUTC,

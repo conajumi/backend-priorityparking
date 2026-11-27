@@ -1,30 +1,21 @@
-// src/modules/auth/auth.service.js
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../../config/prisma');
 const bcrypt = require('bcrypt');
 
-const prisma = new PrismaClient();
-
-/**
- * Busca un estudiante usando su correo institucional.
- */
 async function buscarEstudiantePorCorreo(correo) {
     return await prisma.estudianteHabilitado.findUnique({
         where: { correoInstitucional: correo }
     });
 }
 
-/**
- * Limpia OTPs previos del alumno y guarda el nuevo código en PostgreSQL.
- */
 async function registrarLogOtp(codigoAlumno, codigoOtp) {
     await prisma.registroOtp.deleteMany({
-        where: { codigoAlumno: codigoAlumno }
+        where: { codigoAlumno }
     });
 
     await prisma.registroOtp.create({
         data: {
-            codigoAlumno: codigoAlumno,
-            codigoOtp: codigoOtp,
+            codigoAlumno,
+            codigoOtp,
             expirado: false
         }
     });
@@ -33,15 +24,12 @@ async function registrarLogOtp(codigoAlumno, codigoOtp) {
     return true;
 }
 
-/**
- * Valida el código OTP de un estudiante (vigencia de 5 minutos).
- */
 async function validarCodigoOtp(codigoAlumno, otpIngresado) {
     const cincoMinutosAtras = new Date(Date.now() - 5 * 60 * 1000);
 
     const registro = await prisma.registroOtp.findFirst({
         where: {
-            codigoAlumno: codigoAlumno,
+            codigoAlumno,
             expirado: false,
             fechaGeneracion: { gte: cincoMinutosAtras }
         },
@@ -60,12 +48,9 @@ async function validarCodigoOtp(codigoAlumno, otpIngresado) {
     return false;
 }
 
-/**
- * Valida credenciales de operadores (ADMIN o GARITA) contra PostgreSQL usando bcrypt.
- */
 async function validarUsuarioSistema(username, passwordPlano) {
     const usuario = await prisma.usuarioSistema.findUnique({
-        where: { username: username }
+        where: { username }
     });
 
     if (!usuario || !usuario.activo) {
@@ -84,13 +69,10 @@ async function validarUsuarioSistema(username, passwordPlano) {
     };
 }
 
-/**
- * Verifica si un alumno cuenta con una sanción activa.
- */
 async function verificarEstudiantePenalizado(codigoAlumno) {
     const penalizacion = await prisma.historialPenalizacion.findFirst({
         where: {
-            codigoAlumno: codigoAlumno,
+            codigoAlumno,
             activa: true,
             fechaFin: { gte: new Date() }
         }

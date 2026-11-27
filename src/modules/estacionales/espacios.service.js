@@ -1,10 +1,5 @@
-// src/modules/estacionales/espacios.service.js
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../../config/prisma');
 
-/**
- * Consulta en la base de datos la lista completa de slots de Lima Centro.
- */
 async function obtenerTodosLosEspacios() {
     const espacios = await prisma.espacioEstacionamiento.findMany({
         select: {
@@ -20,7 +15,6 @@ async function obtenerTodosLosEspacios() {
         ]
     });
 
-    // Mapeo para que el frontend mantenga los nombres snake_case de las propiedades
     return espacios.map(e => ({
         id_espacio: e.idEspacio,
         piso: e.piso,
@@ -30,9 +24,6 @@ async function obtenerTodosLosEspacios() {
     }));
 }
 
-/**
- * Filtra los espacios específicos de un piso determinado.
- */
 async function obtenerEspaciosPorPiso(piso) {
     const espacios = await prisma.espacioEstacionamiento.findMany({
         where: {
@@ -59,13 +50,10 @@ async function obtenerEspaciosPorPiso(piso) {
     }));
 }
 
-/**
- * Modifica el estado de un slot en la base de datos (Ej: De DISPONIBLE a MANTENIMIENTO)
- */
 async function modificarEstadoFisico(idEspacio, nuevoEstado) {
     const actualizado = await prisma.espacioEstacionamiento.update({
         where: {
-            idEspacio: idEspacio
+            idEspacio
         },
         data: {
             estado: nuevoEstado.toUpperCase()
