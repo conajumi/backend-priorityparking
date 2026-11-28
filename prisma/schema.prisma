@@ -26,28 +26,15 @@ model EstudianteHabilitado {
   @@map("estudiantes_habilitados")
 }
 
-model EspacioEstacionamiento {
-  idEspacio    String    @id @map("id_espacio") @db.VarChar(10)
-  piso         Int
-  numeroSlot   Int       @map("numero_slot")
-  estado       String?   @default("DISPONIBLE") @db.VarChar(20)
-  tipoVehiculo String?   @default("AUTO") @map("tipo_vehiculo") @db.VarChar(20)
-  reservas     Reserva[]
-
-  @@map("espacios_estacionamiento")
-}
-
 model Reserva {
-  idReserva             Int                     @id @default(autoincrement()) @map("id_reserva")
-  codigoAlumno          String?                 @map("codigo_alumno") @db.VarChar(15)
-  idEspacio             String?                 @map("id_espacio") @db.VarChar(10)
-  codigoOtpUsado        String                  @map("codigo_otp_usado") @db.VarChar(6)
-  fechaReserva          DateTime                @map("fecha_reserva") @db.Date
-  horaLlegadaProgramada DateTime?               @default(dbgenerated("CURRENT_TIME")) @map("hora_llegada_programada") @db.Time(6)
-  fechaSolicitud        DateTime?               @default(dbgenerated("CURRENT_DATE")) @map("fecha_solicitud") @db.Date
-  estadoReserva         String?                 @default("PENDIENTE") @map("estado_reserva") @db.VarChar(20)
-  estudiante            EstudianteHabilitado?   @relation(fields: [codigoAlumno], references: [codigoAlumno], onDelete: NoAction, onUpdate: NoAction)
-  espacio               EspacioEstacionamiento? @relation(fields: [idEspacio], references: [idEspacio], onDelete: NoAction, onUpdate: NoAction)
+  idReserva             Int                   @id @default(autoincrement()) @map("id_reserva")
+  codigoAlumno          String?               @map("codigo_alumno") @db.VarChar(15)
+  codigoOtpUsado        String                @map("codigo_otp_usado") @db.VarChar(6)
+  fechaReserva          DateTime              @map("fecha_reserva") @db.Date
+  horaLlegadaProgramada DateTime?             @default(dbgenerated("CURRENT_TIME")) @map("hora_llegada_programada") @db.Time(6)
+  fechaSolicitud        DateTime?             @default(dbgenerated("CURRENT_DATE")) @map("fecha_solicitud") @db.Date
+  estadoReserva         String?               @default("PENDIENTE") @map("estado_reserva") @db.VarChar(20)
+  estudiante            EstudianteHabilitado? @relation(fields: [codigoAlumno], references: [codigoAlumno], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([codigoAlumno, fechaReserva], name: "unica_reserva_por_dia_alumno", map: "unica_reserva_por_dia_alumno")
   @@map("reservas")
