@@ -1,20 +1,5 @@
 const prisma = require('../../config/prisma');
-
-function evaluarElegibilidadYPrioridad(pensionesTexto, estadoTexto, meritoTexto, promedio, asistencia) {
-    const estaAlDiaPagos = ['true', '1', 'si', 'sí'].includes(pensionesTexto.toLowerCase());
-    const estaActivo = estadoTexto.toUpperCase() === 'ACTIVO';
-    const esAptoParking = estaActivo && estaAlDiaPagos;
-
-    const meritoNormalizado = meritoTexto.toLowerCase();
-    let nivelPrioridad = 'ESTANDAR';
-    if (meritoNormalizado.includes('quinto')) {
-        nivelPrioridad = 'ALTA_QUINTO';
-    } else if (meritoNormalizado.includes('tercio') || (promedio >= 14.0 && asistencia >= 70.0)) {
-        nivelPrioridad = 'MEDIA_TERCIO';
-    }
-
-    return { estaAlDiaPagos, esAptoParking, nivelPrioridad };
-}
+const { calcularPuntajePrioridad } = require('./prioridad.service');
 
 async function procesarPadronCsv(bufferArchivo) {
     const contenido = bufferArchivo.toString('utf-8');
@@ -57,21 +42,24 @@ async function procesarPadronCsv(bufferArchivo) {
             continue;
         }
 
-        const { estaAlDiaPagos, esAptoParking, nivelPrioridad } = evaluarElegibilidadYPrioridad(
-            pensionesStr,
-            estadoStr,
-            perteneceMerito,
-            promedioPonderado,
-            porcentajeAsistencia
-        );
+        const estaAlDiaPagos = ['true', '1', 'si', 'sí'].includes(String(pensionesStr || '').trim().toLowerCase());
+        const estaActivo = String(estadoStr || '').trim().toUpperCase() === 'ACTIVO';
+        const esApto = estaActivo && estaAlDiaPagos;
 
-        if (esAptoParking) {
+        if (esApto) {
             totalAptos++;
-            if (nivelPrioridad === 'ALTA_QUINTO') prioridadAlta++;
-            else if (nivelPrioridad === 'MEDIA_TERCIO') prioridadMedia++;
+            const { nivelPrioridad } = calcularPuntajePrioridad({
+                perteneceMerito,
+                promedioPonderado,
+                porcentajeAsistencia
+            });
+
+            if (nivelPrioridad === 'ALTA') prioridadAlta++;
+            else if (nivelPrioridad === 'MEDIA') prioridadMedia++;
             else prioridadEstandar++;
         }
 
+        // es_apto_parking es columna generada en PostgreSQL; no se envía en update ni create
         await prisma.estudianteHabilitado.upsert({
             where: { codigoAlumno },
             update: {
@@ -80,8 +68,7 @@ async function procesarPadronCsv(bufferArchivo) {
                 perteneceMerito,
                 promedioPonderado,
                 porcentajeAsistencia,
-                estaAlDiaPagos,
-                esAptoParking
+                estaAlDiaPagos
             },
             create: {
                 codigoAlumno,
@@ -90,8 +77,7 @@ async function procesarPadronCsv(bufferArchivo) {
                 perteneceMerito,
                 promedioPonderado,
                 porcentajeAsistencia,
-                estaAlDiaPagos,
-                esAptoParking
+                estaAlDiaPagos
             }
         });
 

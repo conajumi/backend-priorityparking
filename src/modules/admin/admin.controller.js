@@ -1,6 +1,8 @@
+const prisma = require('../../config/prisma');
 const garitaService = require('./garita.service');
 const cargaCsvService = require('./carga-csv.service');
 const aforoService = require('./aforo.service');
+const { calcularPuntajePrioridad } = require('./prioridad.service');
 
 async function registrarGarita(req, res) {
     const { username, password, nombreCompleto } = req.body;
@@ -81,8 +83,53 @@ async function subirPadronAlumnos(req, res) {
 
 async function obtenerAforo(req, res) {
     try {
-        const estado = await aforoService.obtenerEstadoAforoHoy();
-        return res.status(200).json(estado);
+        const [estado, estudiantes] = await Promise.all([
+            aforoService.obtenerEstadoAforoHoy(),
+            prisma.estudianteHabilitado.findMany({
+                select: {
+                    estaAlDiaPagos: true,
+                    esAptoParking: true,
+                    perteneceMerito: true,
+                    promedioPonderado: true,
+                    porcentajeAsistencia: true
+                }
+            })
+        ]);
+
+        let totalAptos = 0;
+        let altaQuintoSuperior = 0;
+        let mediaTercioSuperior = 0;
+        let estandar = 0;
+
+        for (const est of estudiantes) {
+            const apto = Boolean(est.esAptoParking ?? est.estaAlDiaPagos);
+            if (!apto) continue;
+            totalAptos++;
+
+            const { nivelPrioridad } = calcularPuntajePrioridad({
+                perteneceMerito: est.perteneceMerito,
+                promedioPonderado: est.promedioPonderado,
+                porcentajeAsistencia: est.porcentajeAsistencia
+            });
+
+            if (nivelPrioridad === 'ALTA') altaQuintoSuperior++;
+            else if (nivelPrioridad === 'MEDIA') mediaTercioSuperior++;
+            else estandar++;
+        }
+
+        return res.status(200).json({
+            ...estado,
+            resumenPadronBd: {
+                totalProcesados: estudiantes.length,
+                totalAptos,
+                noAptosPorDeudaOEstado: estudiantes.length - totalAptos,
+                distribucionPrioridad: {
+                    altaQuintoSuperior,
+                    mediaTercioSuperior,
+                    estandar
+                }
+            }
+        });
     } catch (error) {
         console.error('[Admin Controller Error - Aforo]:', error.message);
         return res.status(500).json({ error: 'Error al obtener el estado del aforo.' });
