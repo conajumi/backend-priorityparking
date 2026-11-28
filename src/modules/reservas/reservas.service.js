@@ -16,15 +16,24 @@ function obtenerHoraActualLimaDate() {
     return new Date(`1970-01-01T${limaHoraActual}.000Z`);
 }
 
+function normalizarHoraUtcDate(horaValor) {
+    if (horaValor instanceof Date) {
+        return horaValor;
+    }
+    const raw = String(horaValor || '00:00:00').trim();
+    const partes = raw.split(':');
+    const hh = String(partes[0] || '00').padStart(2, '0');
+    const mm = String(partes[1] || '00').padStart(2, '0');
+    const ss = String(partes[2] || '00').padStart(2, '0');
+    return new Date(`1970-01-01T${hh}:${mm}:${ss}.000Z`);
+}
+
 function evaluarToleranciaReserva(r, horaActualDate) {
     if (r.estadoReserva !== 'PENDIENTE') {
         return { tolerancia_vencida: false, minutos_excedidos: 0 };
     }
 
-    const horaProgDate = r.horaLlegadaProgramada instanceof Date
-        ? r.horaLlegadaProgramada
-        : new Date(`1970-01-01T${String(r.horaLlegadaProgramada)}.000Z`);
-
+    const horaProgDate = normalizarHoraUtcDate(r.horaLlegadaProgramada);
     const limiteMs = horaProgDate.getTime() + TOLERANCIA_MINUTOS * 60 * 1000;
     const diffMs = horaActualDate.getTime() - limiteMs;
 
@@ -190,8 +199,7 @@ async function penalizarReservaPorGarita(idReserva, motivo, diasPenalizacion = 3
 
 async function ejecutarReservaTransaccional(codigoAlumno, codigoOtpUsado, fechaReserva, horaLlegadaProgramada) {
     const fechaDate = new Date(`${fechaReserva}T00:00:00.000Z`);
-    const horaNormalizada = horaLlegadaProgramada.length === 5 ? `${horaLlegadaProgramada}:00` : horaLlegadaProgramada;
-    const horaDate = new Date(`1970-01-01T${horaNormalizada}.000Z`);
+    const horaDate = normalizarHoraUtcDate(horaLlegadaProgramada);
 
     const resultado = await prisma.$transaction(async (tx) => {
         const penalizacion = await tx.historialPenalizacion.findFirst({
@@ -212,13 +220,8 @@ async function ejecutarReservaTransaccional(codigoAlumno, codigoOtpUsado, fechaR
             }
         });
 
-        if (reservaPrevia) {
-            if (['PENDIENTE', 'EN_CURSO', 'COMPLETADA'].includes(reservaPrevia.estadoReserva)) {
-                throw new Error(`Ya cuentas con una reserva activa para el día ${fechaReserva}.`);
-            }
-            if (reservaPrevia.estadoReserva === 'EXPIRADA') {
-                throw new Error(`Tu reserva del ${fechaReserva} expiró por inasistencia en garita; no puedes volver a reservar hoy.`);
-            }
+        if (reservaPrevia && ['PENDIENTE', 'EN_CURSO', 'COMPLETADA'].includes(reservaPrevia.estadoReserva)) {
+            throw new Error(`Ya cuentas con una reserva activa para el día ${fechaReserva}.`);
         }
 
         const mesAnio = String(fechaReserva).slice(0, 7);
@@ -242,7 +245,7 @@ async function ejecutarReservaTransaccional(codigoAlumno, codigoOtpUsado, fechaR
             throw new Error('Aforo completo para la fecha seleccionada. No quedan cupos disponibles.');
         }
 
-        if (reservaPrevia && reservaPrevia.estadoReserva === 'CANCELADA') {
+        if (reservaPrevia && ['CANCELADA', 'EXPIRADA'].includes(reservaPrevia.estadoReserva)) {
             return await tx.reserva.update({
                 where: { idReserva: reservaPrevia.idReserva },
                 data: {
@@ -339,10 +342,7 @@ async function procesarIngresoEnGarita(codigoAlumno) {
             };
         }
 
-        const horaProgDate = reserva.horaLlegadaProgramada instanceof Date
-            ? reserva.horaLlegadaProgramada
-            : new Date(`1970-01-01T${String(reserva.horaLlegadaProgramada)}.000Z`);
-
+        const horaProgDate = normalizarHoraUtcDate(reserva.horaLlegadaProgramada);
         const horaProgramadaStr = horaProgDate.toISOString().slice(11, 19);
         const limiteToleranciaMs = horaProgDate.getTime() + TOLERANCIA_MINUTOS * 60 * 1000;
 
