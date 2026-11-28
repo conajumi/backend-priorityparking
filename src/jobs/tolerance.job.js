@@ -1,7 +1,9 @@
 const cron = require('node-cron');
 const prisma = require('../config/prisma');
+const { limpiarOtpsExpirados } = require('../modules/auth/auth.service');
 
 function iniciarVerificadorTolerancia() {
+    // Se ejecuta cada minuto para validar tolerancia de reservas y depurar OTPs vencidos
     cron.schedule('* * * * *', async () => {
         try {
             const ahora = new Date();
@@ -45,6 +47,11 @@ function iniciarVerificadorTolerancia() {
                 ]);
 
                 console.warn(`🚨 [Tolerancia] Alumno ${reserva.codigoAlumno} penalizado. Cupo liberado al aforo diario.`);
+            }
+
+            const otpsEliminados = await limpiarOtpsExpirados();
+            if (otpsEliminados > 0) {
+                console.log(`🧹 [OTP] Se limpiaron ${otpsEliminados} registros OTP expirados/antiguos.`);
             }
         } catch (error) {
             console.error('Error en Cron de Tolerancia:', error.message);

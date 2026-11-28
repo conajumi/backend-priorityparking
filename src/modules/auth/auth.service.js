@@ -1,15 +1,32 @@
 const prisma = require('../../config/prisma');
 const bcrypt = require('bcrypt');
 
+const OTP_VIGENCIA_MINUTOS = 3;
+const OTP_PERMANENCIA_HORAS = 1;
+
 async function buscarEstudiantePorCorreo(correo) {
     return await prisma.estudianteHabilitado.findUnique({
         where: { correoInstitucional: correo }
     });
 }
 
+async function limpiarOtpsExpirados() {
+    const limitePermanencia = new Date(Date.now() - OTP_PERMANENCIA_HORAS * 60 * 60 * 1000);
+    const resultado = await prisma.registroOtp.deleteMany({
+        where: {
+            fechaGeneracion: { lt: limitePermanencia }
+        }
+    });
+    return resultado.count;
+}
+
 async function registrarLogOtp(codigoAlumno, codigoOtp) {
-    await prisma.registroOtp.deleteMany({
-        where: { codigoAlumno }
+    await limpiarOtpsExpirados();
+
+    // Marca como expirados los OTP anteriores pendientes de este alumno sin borrarlos aún
+    await prisma.registroOtp.updateMany({
+        where: { codigoAlumno, expirado: false },
+        data: { expirado: true }
     });
 
     await prisma.registroOtp.create({
@@ -20,18 +37,18 @@ async function registrarLogOtp(codigoAlumno, codigoOtp) {
         }
     });
 
-    console.log(`[Database] OTP '${codigoOtp}' registrado para el alumno: ${codigoAlumno}`);
+    console.log(`[Database] OTP '${codigoOtp}' registrado (vigencia ${OTP_VIGENCIA_MINUTOS} min, retención ${OTP_PERMANENCIA_HORAS} h) para: ${codigoAlumno}`);
     return true;
 }
 
 async function validarCodigoOtp(codigoAlumno, otpIngresado) {
-    const cincoMinutosAtras = new Date(Date.now() - 5 * 60 * 1000);
+    const limiteVigencia = new Date(Date.now() - OTP_VIGENCIA_MINUTOS * 60 * 1000);
 
     const registro = await prisma.registroOtp.findFirst({
         where: {
             codigoAlumno,
             expirado: false,
-            fechaGeneracion: { gte: cincoMinutosAtras }
+            fechaGeneracion: { gte: limiteVigencia }
         },
         orderBy: { fechaGeneracion: 'desc' }
     });
@@ -45,6 +62,7 @@ async function validarCodigoOtp(codigoAlumno, otpIngresado) {
         });
         return true;
     }
+
     return false;
 }
 
@@ -91,6 +109,7 @@ async function verificarEstudiantePenalizado(codigoAlumno) {
 
 module.exports = {
     buscarEstudiantePorCorreo,
+    limpiarOtpsExpirados,
     registrarLogOtp,
     validarCodigoOtp,
     validarUsuarioSistema,
