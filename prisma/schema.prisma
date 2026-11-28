@@ -34,6 +34,7 @@ model Reserva {
   horaLlegadaProgramada DateTime?             @default(dbgenerated("CURRENT_TIME")) @map("hora_llegada_programada") @db.Time(6)
   fechaSolicitud        DateTime?             @default(dbgenerated("CURRENT_DATE")) @map("fecha_solicitud") @db.Date
   estadoReserva         String?               @default("PENDIENTE") @map("estado_reserva") @db.VarChar(20)
+  qrCode                String?               @map("qr_code") @db.Text
   estudiante            EstudianteHabilitado? @relation(fields: [codigoAlumno], references: [codigoAlumno], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([codigoAlumno, fechaReserva], name: "unica_reserva_por_dia_alumno", map: "unica_reserva_por_dia_alumno")

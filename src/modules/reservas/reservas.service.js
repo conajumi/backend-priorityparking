@@ -58,12 +58,26 @@ function formatearReserva(r) {
     return {
         id_reserva: r.idReserva,
         codigo_alumno: r.codigoAlumno,
-        id_espacio: r.idEspacio,
         codigo_otp_usado: r.codigoOtpUsado,
         fecha_reserva: fechaStr,
         hora_llegada_programada: horaStr,
-        estado_reserva: r.estadoReserva
+        estado_reserva: r.estadoReserva,
+        qr_code: r.qrCode || null
     };
+}
+
+async function limpiarQrsVencidos() {
+    const hoyDate = obtenerFechaHoyLimaDate();
+    await prisma.reserva.updateMany({
+        where: {
+            qrCode: { not: null },
+            OR: [
+                { fechaReserva: { lt: hoyDate } },
+                { estadoReserva: { in: ['CANCELADA', 'EXPIRADA', 'FINALIZADA'] } }
+            ]
+        },
+        data: { qrCode: null }
+    });
 }
 
 async function buscarReservaActiva(codigoAlumno, fechaReserva) {
@@ -127,7 +141,10 @@ async function ejecutarSalidaPorAlumno(codigoAlumno) {
 
     const actualizada = await prisma.reserva.update({
         where: { idReserva: activa.idReserva },
-        data: { estadoReserva: 'FINALIZADA' }
+        data: {
+            estadoReserva: 'FINALIZADA',
+            qrCode: null
+        }
     });
 
     return formatearReserva(actualizada);
@@ -182,7 +199,10 @@ async function penalizarReservaPorGarita(idReserva, motivo, diasPenalizacion = 3
         if (reserva.estadoReserva === 'PENDIENTE') {
             await tx.reserva.update({
                 where: { idReserva: id },
-                data: { estadoReserva: 'EXPIRADA' }
+                data: {
+                    estadoReserva: 'EXPIRADA',
+                    qrCode: null
+                }
             });
         }
 
@@ -245,41 +265,46 @@ async function ejecutarReservaTransaccional(codigoAlumno, codigoOtpUsado, fechaR
             throw new Error('Aforo completo para la fecha seleccionada. No quedan cupos disponibles.');
         }
 
+        let registroReserva;
         if (reservaPrevia && ['CANCELADA', 'EXPIRADA'].includes(reservaPrevia.estadoReserva)) {
-            return await tx.reserva.update({
+            registroReserva = await tx.reserva.update({
                 where: { idReserva: reservaPrevia.idReserva },
                 data: {
                     codigoOtpUsado,
                     horaLlegadaProgramada: horaDate,
                     estadoReserva: 'PENDIENTE',
-                    idEspacio: null
+                    qrCode: null
+                }
+            });
+        } else {
+            registroReserva = await tx.reserva.create({
+                data: {
+                    codigoAlumno,
+                    codigoOtpUsado,
+                    fechaReserva: fechaDate,
+                    horaLlegadaProgramada: horaDate,
+                    estadoReserva: 'PENDIENTE'
                 }
             });
         }
 
-        return await tx.reserva.create({
-            data: {
-                codigoAlumno,
-                idEspacio: null,
-                codigoOtpUsado,
-                fechaReserva: fechaDate,
-                horaLlegadaProgramada: horaDate,
-                estadoReserva: 'PENDIENTE'
-            }
+        const payloadQR = JSON.stringify({
+            idReserva: registroReserva.idReserva,
+            codigoAlumno,
+            fechaReserva,
+            horaLlegadaProgramada
+        });
+        const qrCodeBase64 = await QRCode.toDataURL(payloadQR, { margin: 2, width: 250 });
+
+        return await tx.reserva.update({
+            where: { idReserva: registroReserva.idReserva },
+            data: { qrCode: qrCodeBase64 }
         });
     });
 
-    const payloadQR = JSON.stringify({
-        idReserva: resultado.idReserva,
-        codigoAlumno,
-        fechaReserva,
-        horaLlegadaProgramada
-    });
-    const qrCodeBase64 = await QRCode.toDataURL(payloadQR, { margin: 2, width: 250 });
-
     return {
         reserva: formatearReserva(resultado),
-        qrCode: qrCodeBase64
+        qrCode: resultado.qrCode
     };
 }
 
@@ -301,7 +326,10 @@ async function ejecutarCancelacionTransaccional(codigoAlumno, fechaReserva) {
 
         await tx.reserva.update({
             where: { idReserva: pendiente.idReserva },
-            data: { estadoReserva: 'CANCELADA' }
+            data: {
+                estadoReserva: 'CANCELADA',
+                qrCode: null
+            }
         });
     });
 
@@ -309,6 +337,8 @@ async function ejecutarCancelacionTransaccional(codigoAlumno, fechaReserva) {
 }
 
 async function obtenerReservasPorAlumno(codigoAlumno) {
+    await limpiarQrsVencidos();
+
     const reservas = await prisma.reserva.findMany({
         where: { codigoAlumno },
         orderBy: [
@@ -349,7 +379,10 @@ async function procesarIngresoEnGarita(codigoAlumno) {
         if (horaActualDate.getTime() > limiteToleranciaMs) {
             await tx.reserva.update({
                 where: { idReserva: reserva.idReserva },
-                data: { estadoReserva: 'EXPIRADA' }
+                data: {
+                    estadoReserva: 'EXPIRADA',
+                    qrCode: null
+                }
             });
 
             throw {
