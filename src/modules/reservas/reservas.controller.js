@@ -1,4 +1,5 @@
 const reservasService = require('./reservas.service');
+const prisma = require('../../config/prisma');
 
 async function registrarIngresoVehiculo(req, res) {
     const codigoAlumnoLimpio = req.body.codigo_alumno || req.body.codigoAlumno;
@@ -47,6 +48,27 @@ async function obtenerEspaciosGarita(req, res) {
     } catch (error) {
         console.error('[Reservas Controller Error]:', error.message);
         return res.status(500).json({ error: 'Fallo interno al obtener el monitor diario.' });
+    }
+}
+
+async function penalizarReservaGarita(req, res) {
+    const idReserva = req.body.id_reserva || req.body.idReserva;
+    const motivo = (req.body.motivo || '').trim() || 'Inasistencia / tolerancia de 20 min vencida registrada por garita.';
+    const dias = parseInt(req.body.dias ?? 3, 10);
+
+    if (!idReserva) {
+        return res.status(400).json({ error: 'Falta el parámetro obligatorio (id_reserva).' });
+    }
+
+    try {
+        const resultado = await reservasService.penalizarReservaPorGarita(idReserva, motivo, dias);
+        return res.status(200).json({
+            mensaje: `Penalización registrada para ${resultado.codigoAlumno}.`,
+            penalizacion: resultado
+        });
+    } catch (error) {
+        console.error('[Garita Penalización Error]:', error.message);
+        return res.status(400).json({ error: error.message || 'No se pudo registrar la penalización.' });
     }
 }
 
@@ -106,14 +128,48 @@ async function cancelarReservaAlumno(req, res) {
 
 async function listarMisReservas(req, res) {
     try {
-        const codigoAlumno = req.query.codigoAlumno || req.usuario?.codigoAlumno || req.body?.codigo_alumno;
+        const codigoParam = req.query.codigoAlumno || req.usuario?.codigoAlumno || req.body?.codigo_alumno;
 
-        if (!codigoAlumno) {
+        if (!codigoParam) {
             return res.status(400).json({ error: 'Falta el parámetro obligatorio: codigoAlumno.' });
         }
 
-        const reservas = await reservasService.obtenerReservasPorAlumno(String(codigoAlumno).trim().toUpperCase());
-        return res.status(200).json(reservas);
+        const codigoAlumno = String(codigoParam).trim().toUpperCase();
+        const ahora = new Date();
+
+        const [reservas, penalizaciones] = await Promise.all([
+            reservasService.obtenerReservasPorAlumno(codigoAlumno),
+            prisma.historialPenalizacion.findMany({
+                where: { codigoAlumno },
+                orderBy: { fechaInicio: 'desc' }
+            })
+        ]);
+
+        const activaRaw = penalizaciones.find(p => p.activa && new Date(p.fechaFin) >= ahora) || null;
+        let penalizacionActiva = null;
+
+        if (activaRaw) {
+            const msRestantes = Math.max(0, new Date(activaRaw.fechaFin).getTime() - ahora.getTime());
+            const diasRestantes = Math.ceil(msRestantes / (1000 * 60 * 60 * 24));
+            const duracionTotalDias = activaRaw.fechaInicio
+                ? Math.max(1, Math.round((new Date(activaRaw.fechaFin).getTime() - new Date(activaRaw.fechaInicio).getTime()) / (1000 * 60 * 60 * 24)))
+                : 3;
+
+            penalizacionActiva = {
+                idPenalizacion: activaRaw.idPenalizacion,
+                motivo: activaRaw.motivo,
+                fechaInicio: activaRaw.fechaInicio,
+                fechaFin: activaRaw.fechaFin,
+                duracionDias: duracionTotalDias,
+                diasRestantes
+            };
+        }
+
+        return res.status(200).json({
+            reservas,
+            penalizacionActiva,
+            totalPenalizaciones: penalizaciones.length
+        });
     } catch (error) {
         console.error('[Reservas Controller Error - listarMisReservas]:', error.message);
         return res.status(500).json({ error: 'Fallo interno al consultar el listado de reservas.' });
@@ -124,6 +180,7 @@ module.exports = {
     registrarIngresoVehiculo,
     registrarSalidaVehiculo,
     obtenerEspaciosGarita,
+    penalizarReservaGarita,
     crearReservaAlumno,
     cancelarReservaAlumno,
     listarMisReservas
