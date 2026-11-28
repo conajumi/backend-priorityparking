@@ -15,7 +15,7 @@ model EstudianteHabilitado {
   estaAlDiaPagos           Boolean?                @default(true) @map("esta_al_dia_pagos")
   porcentajeAsistencia     Decimal                 @map("porcentaje_asistencia") @db.Decimal(5, 2)
   promedioPonderado        Decimal                 @map("promedio_ponderado") @db.Decimal(4, 2)
-  esAptoParking            Boolean?                @default(dbgenerated("((esta_al_dia_pagos = true) AND (porcentaje_asistencia >= 70.00) AND (promedio_ponderado >= 14.00))")) @map("es_apto_parking")
+  esAptoParking            Boolean?                @default(dbgenerated("(esta_al_dia_pagos = true)")) @map("es_apto_parking")
   ultima_actualizacion_etl DateTime?               @default(now()) @db.Timestamp(6)
   penalizaciones           HistorialPenalizacion[]
   registrosOtp             RegistroOtp[]
