@@ -11,8 +11,8 @@ async function solicitarOtp(req, res) {
     try {
         const regexUtp = /^[a-zA-Z0-9._%+-]+@utp\.edu\.pe$/;
         if (!regexUtp.test(correo)) {
-            return res.status(400).json({ 
-                error: 'Acceso denegado. Debe ingresar un correo institucional válido de la UTP (@utp.edu.pe).' 
+            return res.status(400).json({
+                error: 'Acceso denegado. Debe ingresar un correo institucional válido de la UTP (@utp.edu.pe).'
             });
         }
 
@@ -20,23 +20,15 @@ async function solicitarOtp(req, res) {
         const estudiante = Array.isArray(resultadoBD) ? resultadoBD[0] : resultadoBD;
 
         if (!estudiante) {
-            return res.status(404).json({ 
-                error: 'El estudiante no se encuentra registrado en el sistema institucional actual.' 
-            });
-        }
-
-        const penalizacion = await authService.verificarEstudiantePenalizado(estudiante.codigoAlumno);
-        if (penalizacion.isPenalized) {
-            const fechaFormateada = new Date(penalizacion.fechaFin).toLocaleString('es-PE');
-            return res.status(403).json({ 
-                error: `Acceso Denegado PriorityParking: Tu usuario se encuentra penalizado debido a: "${penalizacion.motivo}". Bloqueo vigente hasta el ${fechaFormateada}.` 
+            return res.status(404).json({
+                error: 'El estudiante no se encuentra registrado en el sistema institucional actual.'
             });
         }
 
         if (!estudiante.esAptoParking) {
             let motivosRechazo = [];
             if (!estudiante.estaAlDiaPagos) {
-                motivosRechazo.push("Presentas deudas pendientes en tus cuotas académicas.");
+                motivosRechazo.push('Presentas deudas pendientes en tus cuotas académicas.');
             }
             if (parseFloat(estudiante.porcentajeAsistencia) < 70.00) {
                 motivosRechazo.push(`Tu asistencia actual es de ${estudiante.porcentajeAsistencia}%, siendo el mínimo requerido 70%.`);
@@ -45,20 +37,19 @@ async function solicitarOtp(req, res) {
                 motivosRechazo.push(`Tu promedio ponderado es de ${estudiante.promedioPonderado}, siendo la nota mínima requerida 14.00.`);
             }
 
-            return res.status(403).json({ 
-                error: `Acceso Denegado PriorityParking: No cumples con los requisitos del día de hoy debido a: ${motivosRechazo.join(" y ")}` 
+            return res.status(403).json({
+                error: `Acceso Denegado PriorityParking: No cumples con los requisitos del día de hoy debido a: ${motivosRechazo.join(' y ')}`
             });
         }
 
-        const codigoOtp = "000000"; 
+        const codigoOtp = '000000';
         await authService.registrarLogOtp(estudiante.codigoAlumno, codigoOtp);
         console.log(`\n📬 [Seguridad MVP] Código OTP generado para ${correo}: ${codigoOtp}\n`);
 
-        return res.status(200).json({ 
+        return res.status(200).json({
             mensaje: 'Código de verificación generado exitosamente.',
             codigoAlumno: estudiante.codigoAlumno
         });
-
     } catch (error) {
         console.error('[Auth Controller Error Critical]:', error.message);
         return res.status(500).json({ error: 'Error interno del servidor al procesar la solicitud de acceso.' });
@@ -109,20 +100,19 @@ async function verificarOtp(req, res) {
 
         const tokenJwt = jwt.sign(payload, claveSecreta, { expiresIn: '2h' });
 
-        return res.status(200).json({ 
+        return res.status(200).json({
             mensaje: 'Autenticación exitosa. Bienvenido a PriorityParking.',
             autorizado: true,
             token: tokenJwt,
             rol: rolUsuario
         });
-
     } catch (error) {
         console.error('[Auth Controller Error Real]:', error.message);
         return res.status(500).json({ error: 'Error interno del servidor al verificar el acceso.' });
     }
 }
 
-module.exports = { 
+module.exports = {
     solicitarOtp,
     verificarOtp
 };
